@@ -3,6 +3,7 @@
 #include <TlHelp32.h>
 #include <algorithm>
 #include <codecvt>
+#include <set>
 #include <stdexcept>
 
 // Initialize static process name cache
@@ -240,10 +241,31 @@ bool VolumeController::Impl::setVolume(
     // Clip volume level to valid range [0.0, 1.0]
     volumeLevel = std::clamp(volumeLevel, 0.0f, 1.0f);
 
+    std::set<CComPtr<ISimpleAudioVolume>> uniqueSessions;
+
     // Set volume for all specified processes
     for (const auto &processName : processNames) {
-        if (!setVolumeInternal(processName, volumeLevel)) {
-            return false;
+        std::string processNameLower = processName;
+        std::transform(processNameLower.begin(), processNameLower.end(),
+                       processNameLower.begin(), ::towlower);
+
+        if (processNameLower == "master") {
+            return setMasterVolume(volumeLevel);
+        }
+
+        for (auto &session : getAudioSessionsForProcess(processNameLower)) {
+            if (session) {
+                uniqueSessions.insert(session.p);
+            }
+        }
+    }
+
+    for (auto &session : uniqueSessions) {
+        if (session) {
+            HRESULT hr = session->SetMasterVolume(volumeLevel, nullptr);
+            if (FAILED(hr)) {
+                return false;
+            }
         }
     }
 
@@ -292,12 +314,33 @@ bool VolumeController::Impl::setMute(
     // Thread-safe access to mute control
     std::lock_guard<std::mutex> lock(mtx);
 
-    // Set mute for all specified processes
+    std::set<CComPtr<ISimpleAudioVolume>> uniqueSessions;
+
     for (const auto &processName : processNames) {
-        if (!setMuteInternal(processName, mute)) {
-            return false;
+        std::string processNameLower = processName;
+        std::transform(processNameLower.begin(), processNameLower.end(),
+                       processNameLower.begin(), ::towlower);
+
+        if (processNameLower == "master") {
+            return setMasterMute(mute);
+        }
+
+        for (auto &session : getAudioSessionsForProcess(processNameLower)) {
+            if (session) {
+                uniqueSessions.insert(session.p);
+            }
         }
     }
+
+    // Set mute for all specified processes
+    for (auto &session : uniqueSessions) {
+        if (session) {
+            HRESULT hr = session->SetMute(mute, nullptr);
+            if (FAILED(hr)) {
+                return false;
+            }
+        }
+        }
 
     return true;
 }
