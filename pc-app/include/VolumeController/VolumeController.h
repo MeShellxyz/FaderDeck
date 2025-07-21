@@ -16,6 +16,8 @@ public:
     VolumeController();
     ~VolumeController();
 
+    class Impl;
+
     // Prevent copying, allow moving
     VolumeController(const VolumeController &) = delete;
     VolumeController &operator=(const VolumeController &) = delete;
@@ -33,8 +35,10 @@ public:
     bool setMute(const std::string &processName, int mute);
     bool setMute(const std::vector<std::string> &processNames, int mute);
 
+    // Notification for default device changes
+    void onDefaultDeviceChanged();
+
 private:
     // Forward declaration of implementation class
-    class Impl;
     std::unique_ptr<Impl> pImpl;
 };

@@ -41,6 +41,9 @@ bool VolumeController::Impl::initializeCOM() {
         return false;
     }
 
+    pNotificationClient = new NotificationClient(this);
+    pEnumerator->RegisterEndpointNotificationCallback(pNotificationClient);
+
     // Activate audio endpoint volume interface
     hr = pDevice->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
                            reinterpret_cast<void **>(&pEndpointVolume));
@@ -297,4 +300,21 @@ bool VolumeController::Impl::setMute(
     }
 
     return true;
+}
+
+void VolumeController::Impl::onDefaultDeviceChanged() {
+    std::lock_guard<std::mutex> lock(mtx);
+
+    pDevice.Release();
+    pEndpointVolume.Release();
+    pSessionManager.Release();
+
+    HRESULT hr =
+        pEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &pDevice);
+    if (SUCCEEDED(hr)) {
+        pDevice->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
+                          reinterpret_cast<void **>(&pEndpointVolume));
+        pDevice->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
+                          reinterpret_cast<void **>(&pSessionManager));
+    }
 }

@@ -49,3 +49,8 @@ bool VolumeController::setMute(const std::vector<std::string> &processNames,
                                int mute) {
     return pImpl->setMute(processNames, mute);
 }
+
+// Notification for default device changes
+void VolumeController::onDefaultDeviceChanged() {
+    return pImpl->onDefaultDeviceChanged();
+}
