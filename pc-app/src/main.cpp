@@ -47,7 +47,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                     }
 
                     // Get mute state
-                    int mute = data[i + config.getChannelCount() + 1];
+                    int mute = data[i + config.getChannelCount()];
 
                     // Apply to all applications mapped to this channel
                     const std::vector<std::string> &apps =
