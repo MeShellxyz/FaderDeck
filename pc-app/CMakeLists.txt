@@ -5,7 +5,6 @@ project(VolWare VERSION 0.1.0)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include(FetchContent)
 
 # Define Windows API target version to avoid the warning
 if(MSVC)
@@ -31,24 +30,10 @@ else()
     message(FATAL_ERROR "Unsupported OS")
 endif()
 
-# Fetch dependencies
-FetchContent_Declare(
-    yaml_cpp
-    GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-    GIT_TAG        master
-)
-# Fix for yaml-cpp utility build errors
-set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "Don't build yaml-cpp tools" FORCE)
-FetchContent_MakeAvailable(yaml_cpp)
+find_package(yaml-cpp CONFIG REQUIRED)
+find_package(Boost CONFIG REQUIRED COMPONENTS system asio)
 
-FetchContent_Declare(
-    boost
-    GIT_REPOSITORY https://github.com/boostorg/boost.git
-    GIT_TAG        boost-1.83.0
-)
-set(BOOST_INCLUDE_LIBRARIES asio system)
-set(BOOST_ENABLE_CMAKE ON)
-FetchContent_MakeAvailable(boost)
+set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "Don't build yaml-cpp tools" FORCE)
 
 # Create component libraries
 # 1. Configuration Library
@@ -56,14 +41,14 @@ add_library(Configuration STATIC
     src/Config.cpp
 )
 target_include_directories(Configuration PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(Configuration PRIVATE yaml-cpp)
+target_link_libraries(Configuration PRIVATE yaml-cpp::yaml-cpp)
 
 # 2. Serial Communication Library
 add_library(SerialComm STATIC
     src/SerialReader.cpp
 )
 target_include_directories(SerialComm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(SerialComm PRIVATE Boost::system Boost::asio)
+target_link_libraries(SerialComm PRIVATE boost::boost)
 
 # 3. Volume Control Library (platform-independent part)
 add_library(VolumeControl STATIC
@@ -109,7 +94,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     SerialComm
     VolumeControl
     PlatformSpecific
-    yaml-cpp
-    Boost::system
-    Boost::asio
+    yaml-cpp::yaml-cpp
+    boost::boost
 )

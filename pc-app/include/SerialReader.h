@@ -55,7 +55,7 @@ private:
     SerialInputCallback m_callback;
 
     // Boost ASIO objects
-    boost::asio::io_service m_ioService;
+    boost::asio::io_context m_ioService;
     boost::asio::serial_port m_serialPort;
     boost::asio::streambuf m_readBuffer;
     std::unique_ptr<boost::asio::steady_timer> m_syncTimer;

@@ -109,7 +109,7 @@ void SerialReader::sendSyncMessage() {
                 std::cerr << "Failed to send sync message." << std::endl;
                 m_connected = false;
                 closePort();
-                m_ioService.reset();
+                m_ioService.restart();
                 return;
             }
             scheduleSyncTimer();
@@ -178,7 +178,7 @@ void SerialReader::readComplete(const boost::system::error_code &error,
         std::cerr << "Error reading from serial port: " << error.message()
                   << std::endl;
         closePort();
-        m_ioService.reset();
+        m_ioService.restart();
     }
 }
 
@@ -188,7 +188,7 @@ void SerialReader::workerThread() {
             if (openPort()) {
                 readStart();
                 m_ioService.run();
-                m_ioService.reset();
+                m_ioService.restart();
             } else {
                 // Wait before reconnecting
                 std::this_thread::sleep_for(
