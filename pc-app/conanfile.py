@@ -8,7 +8,7 @@ class ExampleRecipe(ConanFile):
 
     def requirements(self):
         self.requires("boost/1.90.0")
-        self.requires("yaml-cpp/0.8.0")
+        self.requires("tomlplusplus/3.4.0")
 
     def layout(self):
         cmake_layout(self)
