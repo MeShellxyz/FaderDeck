@@ -16,7 +16,15 @@ VolumeController::Impl::Impl() {
     }
 }
 
-VolumeController::Impl::~Impl() { CoUninitialize(); }
+VolumeController::Impl::~Impl() {
+    // Unregister notification callback to prevent callbacks to freed Impl
+    if (pEnumerator && pNotificationClient) {
+        // Unregister; use raw pointer from CComPtr
+        pEnumerator->UnregisterEndpointNotificationCallback(pNotificationClient.p);
+    }
+
+    CoUninitialize();
+}
 
 bool VolumeController::Impl::initializeCOM() {
     // Initialize COM library
@@ -42,8 +50,34 @@ bool VolumeController::Impl::initializeCOM() {
         return false;
     }
 
-    pNotificationClient = new NotificationClient(this);
-    pEnumerator->RegisterEndpointNotificationCallback(pNotificationClient);
+    // Register for device notifications (default endpoint changes)
+    CComObject<NotificationClient>* pNotifRaw = nullptr;
+    hr = CComObject<NotificationClient>::CreateInstance(&pNotifRaw);
+    if (FAILED(hr) || !pNotifRaw) {
+        CoUninitialize();
+        return false;
+    }
+
+    pNotifRaw->Init(this);
+
+    CComPtr<IMMNotificationClient> spNotify;
+    hr = pNotifRaw->QueryInterface(__uuidof(IMMNotificationClient),
+                                   reinterpret_cast<void**>(&spNotify));
+    if (FAILED(hr)) {
+        delete pNotifRaw;
+        CoUninitialize();
+        return false;
+    }
+
+    hr = pEnumerator->RegisterEndpointNotificationCallback(spNotify);
+    if (FAILED(hr)) {
+        spNotify.Release();
+        CoUninitialize();
+        return false;
+    }
+
+    pNotificationClient = spNotify;
+    
 
     // Activate audio endpoint volume interface
     hr = pDevice->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
@@ -255,7 +289,7 @@ bool VolumeController::Impl::setVolume(
 
         for (auto &session : getAudioSessionsForProcess(processNameLower)) {
             if (session) {
-                uniqueSessions.insert(session.p);
+                uniqueSessions.insert(session);
             }
         }
     }
@@ -327,7 +361,7 @@ bool VolumeController::Impl::setMute(
 
         for (auto &session : getAudioSessionsForProcess(processNameLower)) {
             if (session) {
-                uniqueSessions.insert(session.p);
+                uniqueSessions.insert(session);
             }
         }
     }
@@ -340,7 +374,7 @@ bool VolumeController::Impl::setMute(
                 return false;
             }
         }
-        }
+    }
 
     return true;
 }

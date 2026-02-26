@@ -14,6 +14,7 @@ endif()
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 
 # Define Windows API target version to avoid the warning
@@ -26,8 +27,8 @@ endif()
 
 add_subdirectory(src/Core)
 add_subdirectory(src/Config)
-add_subdirectory(src/Events)
 add_subdirectory(src/AudioDriver)
 add_subdirectory(src/SerialListener)
+add_subdirectory(src/AppHost)
 
 add_subdirectory(app)

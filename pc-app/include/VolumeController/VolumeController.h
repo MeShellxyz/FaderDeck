@@ -11,18 +11,18 @@
  * audio volumes for both the master system volume and per-application
  * volumes. Implementation details are hidden behind the PIMPL idiom.
  */
-class VolumeController {
+class AudioDriver {
 public:
-    VolumeController();
-    ~VolumeController();
+    AudioDriver();
+    ~AudioDriver();
 
     class Impl;
 
     // Prevent copying, allow moving
-    VolumeController(const VolumeController &) = delete;
-    VolumeController &operator=(const VolumeController &) = delete;
-    VolumeController(VolumeController &&) noexcept;
-    VolumeController &operator=(VolumeController &&) noexcept;
+    AudioDriver(const AudioDriver &) = delete;
+    AudioDriver &operator=(const AudioDriver &) = delete;
+    AudioDriver(AudioDriver &&) noexcept;
+    AudioDriver &operator=(AudioDriver &&) noexcept;
 
     // Volume control methods
     bool setMasterVolume(float volumeLevel);

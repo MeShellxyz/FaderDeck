@@ -1,9 +1,9 @@
 #pragma once
 
 #if defined(_WIN32)
-    #define HWM_PLATFORM_WINDOWS
+    #define VW_PLATFORM_WINDOWS 1
 #elif defined(__linux__)
-    #define HWM_PLATFORM_LINUX
+    #define VW_PLATFORM_LINUX 1
 #else
     #error "Unsupported OS"
 #endif
