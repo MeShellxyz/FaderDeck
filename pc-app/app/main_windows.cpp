@@ -31,33 +31,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     // int main() {
 
     ConfigStore configStore;
-
+    AppConfig appConfig;
+    if (!configStore.loadConfig(appConfig)) {
+        std::cerr << "Failed to load config. Using defaults." << std::endl;
+    }
     std::cout << "[INIT] Done" << std::endl;
 
-    AppConfig appConfig;
-    configStore.loadConfig(appConfig);
+    try {
+        AppHost appHost(appConfig);
+        appHost.run();
+    } catch (const std::exception &e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1; }
 
-    std::cout << "[CONFIG] Loaded" << std::endl;
 
-    std::cout << "[CONFIG] Serial Port: " << appConfig.serialConfig.com_port
-              << " Baud Rate: " << appConfig.serialConfig.baud_rate
-              << std::endl;
-    std::cout << "[CONFIG] Audio Invert Sliders: "
-              << appConfig.audioConfig.invert_sliders
-              << " Mute Buttons: " << appConfig.audioConfig.mute_buttons
-              << " Num Channels: " << appConfig.audioConfig.num_channels
-              << std::endl;
-    std::cout << "[CONFIG] Process Channel Mapping: " << std::endl;
-    for (const auto &mapping : appConfig.audioConfig.processChannelMapping) {
-        std::wcout << L"  Process: " << mapping.first << L" -> Channel: "
-                   << mapping.second << std::endl;
-    }
+
     std::cout << std::endl;
 
     fclose(stdout);
     fclose(stderr);
     fclose(stdin);
     FreeConsole();
+    return 0;
     // try {
     //     // Load configuration
 

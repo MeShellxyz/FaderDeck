@@ -4,6 +4,7 @@
 #include "Core/MixerSharedState.h"
 
 #include <boost/asio.hpp>
+#include <sstream>
 #include <memory>
 
 class SerialListener {
@@ -21,9 +22,12 @@ public:
     void run();
 
 private:
-    void doRead();
-    void handleRead(const boost::system::error_code &error,
+    void onRead();
+    void onMessageRecieved(const boost::system::error_code &error,
                     size_t bytesTransferred);
+
+    bool handleData(std::istringstream &ss);
+    bool handleDataWithMute(std::istringstream &ss);
 
     bool openPort();
     void scheduleReconnect();

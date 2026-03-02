@@ -47,7 +47,7 @@ class AudioDriver {
 public:
     AudioDriver(const std::atomic<bool> &isRunning, const AudioConfig &config,
                 MixerSharedState &sharedState);
-    ~AudioDriver();
+    ~AudioDriver() = default;
 
     // Prevent copying and moving
     AudioDriver(const AudioDriver &) = delete;
@@ -68,6 +68,7 @@ private:
     inline void handleDeviceChange();
     inline void handleCacheReset();
 
+    inline void applyMutes();
     inline void applyVolumes();
 
     bool initGlobalInterfaces();
@@ -105,8 +106,8 @@ private:
     ComPtr<IAudioSessionManager2> m_sessionManager2;
 
     // Pointers to notification clients
-    ComPtr<DeviceNotificationClient> m_deviceNotificationClient;
-    ComPtr<ManagerNotificationClient> m_managerNotificationClient;
+    ComPtr<IMMNotificationClient> m_deviceNotificationClient;
+    ComPtr<IAudioSessionNotification> m_managerNotificationClient;
 
 #endif
 };

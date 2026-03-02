@@ -39,12 +39,16 @@ void AudioDriver::run() {
             "Failed to initialize audio device interfaces.");
     }
 
+    m_sharedState.comReady.store(true, std::memory_order_release);
+    m_sharedState.comReady.notify_all();
+
     uint64_t lastVersion = 0;
 
     while (m_isRunning.load(std::memory_order_acquire)) {
         handleDeviceChange();
         handleCacheReset();
 
+        applyMutes();
         applyVolumes();
 
         m_sharedState.version.wait(lastVersion, std::memory_order_acquire);
@@ -53,6 +57,8 @@ void AudioDriver::run() {
 
     releaseDeviceInterfaces();
     releaseGlobalInterfaces();
+
+    m_sharedState.comReady.store(false, std::memory_order_release);
 }
 
 bool AudioDriver::setVolume(int channelIndex, float volumeLevel) {
@@ -118,19 +124,17 @@ void AudioDriver::handleCacheReset() {
     }
 }
 
+void AudioDriver::applyMutes() {
+    for (size_t i = 0; i < m_audioConfig.num_channels; i++) {
+        if (i == m_masterChannelIndex) {
+            setMasterMute(m_sharedState.channelMuteStates[i].load(std::memory_order_relaxed) ? 1 : 0);
+        } else {
+            setMute(i, m_sharedState.channelMuteStates[i].load(std::memory_order_relaxed) ? 1 : 0);
+        }
+    }
+}
+
 void AudioDriver::applyVolumes() {
-    bool isChanging = true;
-    size_t timestamp = 0;
-    constexpr float stabilizationThreshold = 0.01f;
-    constexpr size_t rollbackWindow = 20;
-    std::vector<std::array<float, rollbackWindow>> volumesHistory(
-        m_audioConfig.num_channels);
-
-    while (isChanging && m_isRunning.load(std::memory_order_acquire) &&
-           !m_needsDeviceReset.load(std::memory_order_acquire) &&
-           !m_needsCacheRefresh.load(std::memory_order_acquire)) {
-
-        // Apply volumes and store history
 
         for (size_t i = 0; i < m_audioConfig.num_channels; i++) {
             float currentVolume =
@@ -145,28 +149,7 @@ void AudioDriver::applyVolumes() {
                 m_needsCacheRefresh.store(true, std::memory_order_release);
                 break;
             }
-
-            volumesHistory[i][timestamp % rollbackWindow] = currentVolume;
         }
-
-        // Check if volmes stabilized
-        if (timestamp >= rollbackWindow) {
-            float sum = 0.0f;
-            for (size_t i = 0; i < m_audioConfig.num_channels; i++) {
-                for (size_t j = 0; j < rollbackWindow; j++) {
-                    sum += volumesHistory[i][j];
-                    if (sum > stabilizationThreshold) break;
-                }
-                if (sum > stabilizationThreshold) break;
-            }
-
-            if (sum < stabilizationThreshold) isChanging = false;
-        }
-
-        // Sleep for set framerate or until version changes
-        timestamp++;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
 }
 
 bool AudioDriver::initGlobalInterfaces() {
@@ -181,6 +164,8 @@ bool AudioDriver::initGlobalInterfaces() {
         m_deviceNotificationClient.Get());
 
     if (FAILED(hr)) return false;
+
+    return true;
 }
 
 void AudioDriver::releaseGlobalInterfaces() {
@@ -248,6 +233,7 @@ std::wstring AudioDriver::getProcessNameFromPID(const DWORD &processId) {
 
 void AudioDriver::refreshAudioSessionsCache() {
     if (!m_sessionsCache.empty()) m_sessionsCache.clear();
+    m_sessionsCache.resize(m_audioConfig.num_channels);
 
     ComPtr<IAudioSessionEnumerator> pSessionEnumerator = nullptr;
     HRESULT hr = m_sessionManager2->GetSessionEnumerator(&pSessionEnumerator);

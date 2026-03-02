@@ -13,7 +13,7 @@ class AppHost
 {
 public:
     AppHost(const AppConfig &config);
-    ~AppHost();
+    ~AppHost() = default;
 
     AppHost(const AppHost &) = delete;
     AppHost &operator=(const AppHost &) = delete;

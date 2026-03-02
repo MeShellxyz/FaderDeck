@@ -16,6 +16,8 @@ public:
                              std::atomic<uint64_t> &m_wakeupSignal)
         : m_resetFlag(m_resetFlag), m_wakeupSignal(m_wakeupSignal) {}
 
+    // ~DeviceNotificationClient() = default;
+
     // IMMNotificationClient methods
     IFACEMETHODIMP OnDeviceStateChanged(LPCWSTR pwstrDeviceId,
                                         DWORD dwNewState) override {
@@ -55,6 +57,8 @@ public:
     ManagerNotificationClient(std::atomic<bool> &refreshFlag,
                               std::atomic<uint64_t> &wakeupSignal)
         : m_refreshFlag(refreshFlag), m_wakeupSignal(wakeupSignal) {}
+
+    // ~ManagerNotificationClient() = default;
 
     // IAudioSessionNotification method
     IFACEMETHODIMP OnSessionCreated(IAudioSessionControl *NewSession) override {

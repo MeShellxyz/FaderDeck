@@ -14,11 +14,12 @@ bool ConfigStore::loadConfig(AppConfig &config) {
 
 void ConfigStore::saveDefaultConfig() {
     toml::table configTable{
-        {"serial", toml::table{{"com_port", "COM3"}, {"baud_rate", 115200}}},
+        {"serial", toml::table{{"com_port", "COM3"},
+                               {"baud_rate", 115200},
+                               {"invert_sliders", false}}},
 
         {"audio",
          toml::table{
-             {"invert_sliders", false},
              {"mute_buttons", false},
              {"num_channels", 2},
              {"channels",
@@ -40,10 +41,10 @@ void ConfigStore::parseTomlTable(const toml::table &table, AppConfig &config) {
         table["serial"]["com_port"].value_or(config.serialConfig.com_port);
     config.serialConfig.baud_rate =
         table["serial"]["baud_rate"].value_or(config.serialConfig.baud_rate);
+    config.serialConfig.invert_sliders =
+        table["serial"]["invert_sliders"].value_or(
+            config.serialConfig.invert_sliders);
 
-    config.audioConfig.invert_sliders =
-        table["audio"]["invert_sliders"].value_or(
-            config.audioConfig.invert_sliders);
     config.audioConfig.mute_buttons = table["audio"]["mute_buttons"].value_or(
         config.audioConfig.mute_buttons);
     config.audioConfig.num_channels = table["audio"]["num_channels"].value_or(
