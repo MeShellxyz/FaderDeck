@@ -4,21 +4,36 @@
 #include <string>
 #include <vector>
 
+#include "Config/AppConfig.h"
+#include "Core/MixerSharedState.h"
 #include "Core/Platform.h"
 
 #ifdef VW_PLATFORM_WINDOWS
-    #include <atlbase.h>
-    #include <atlcom.h>
-    #include <audiopolicy.h>
-    #include <endpointvolume.h>
-    #include <mmdeviceapi.h>
-    #include <windows.h>
 
-    #include <chrono>
-    #include <mutex>
-    #include <string>
-    #include <unordered_map>
-    #include <vector>
+#include <wrl/client.h>
+using Microsoft::WRL::ComPtr;
+
+#include <audiopolicy.h>
+#include <endpointvolume.h>
+#include <mmdeviceapi.h>
+#include <windows.h>
+
+#include <chrono>
+#include <shared_mutex>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
+#endif
+
+#if defined(VW_PLATFORM_WINDOWS)
+struct ComInitGuard {
+    HRESULT hr;
+    ComInitGuard() { hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED); }
+    ~ComInitGuard() { if (hr == S_OK) CoUninitialize(); }
+};
+class DeviceNotificationClient;
+class ManagerNotificationClient;
 #endif
 
 /**
@@ -30,123 +45,68 @@
  */
 class AudioDriver {
 public:
-    AudioDriver();
+    AudioDriver(const std::atomic<bool> &isRunning, const AudioConfig &config,
+                MixerSharedState &sharedState);
     ~AudioDriver();
 
-    // Prevent copying, allow moving
+    // Prevent copying and moving
     AudioDriver(const AudioDriver &) = delete;
     AudioDriver &operator=(const AudioDriver &) = delete;
-    AudioDriver(AudioDriver &&) noexcept;
-    AudioDriver &operator=(AudioDriver &&) noexcept;
+    AudioDriver(AudioDriver &&) = delete;
+    AudioDriver &operator=(AudioDriver &&) = delete;
 
-    // Volume control methods
-    bool setMasterVolume(float volumeLevel);
-    bool setVolume(const std::string &processName, float volumeLevel);
-    bool setVolume(const std::vector<std::string> &processNames,
-                   float volumeLevel);
-
-    // Mute control methods
-    bool setMasterMute(int mute);
-    bool setMute(const std::string &processName, int mute);
-    bool setMute(const std::vector<std::string> &processNames, int mute);
-
-    // Notification for default device changes
-    void onDefaultDeviceChanged();
+    void run();
 
 private:
+    // Audio interface wrapper methods
+    bool setVolume(int channelIndex, float volumeLevel);
+    bool setMute(int channelIndex, int mute);
+    bool setMasterVolume(float volumeLevel);
+    bool setMasterMute(int mute);
 
 #if defined(VW_PLATFORM_WINDOWS)
-    // Windows COM initialization
-    bool initializeCOM();
+    inline void handleDeviceChange();
+    inline void handleCacheReset();
 
-    // Internal implementation methods (thread-unsafe)
-    bool setVolumeInternal(const std::string &processName, float volumeLevel);
-    bool setMuteInternal(const std::string &processName, int mute);
+    inline void applyVolumes();
 
-    // Helper methods
-    CComPtr<IMMNotificationClient> pNotificationClient;
+    bool initGlobalInterfaces();
+    void releaseGlobalInterfaces();
 
-    // Process utilities
-    struct CacheProcessEntry {
-        std::string name;
-        std::chrono::system_clock::time_point timestamp;
-    };
+    bool initDeviceInterfaces();
+    void releaseDeviceInterfaces();
 
-    static std::unordered_map<DWORD, CacheProcessEntry> processNameCache;
-    static std::string WideToUtf8(const wchar_t *wstr);
-    static std::string getProcessNameFromId(const DWORD &processId);
+    std::wstring getProcessNameFromPID(const DWORD &processId);
+    void refreshAudioSessionsCache();
 
-    // Audio session management
-    std::vector<CComPtr<ISimpleAudioVolume>>
-    getAudioSessionsForProcess(const std::string &processName);
+    void normalizeWString(std::wstring &input);
 
-    // Windows COM interfaces
-    CComPtr<IMMDeviceEnumerator> pEnumerator;
-    CComPtr<IMMDevice> pDevice;
-    CComPtr<IAudioEndpointVolume> pEndpointVolume;
-    CComPtr<IAudioSessionManager2> pSessionManager;
-
-    // Thread safety
-    std::mutex mtx;
 #endif
-};
 
+    int m_masterChannelIndex{-1};
+
+    const std::atomic<bool> &m_isRunning;
+    const AudioConfig &m_audioConfig;
+    MixerSharedState &m_sharedState;
+
+/// NEW NEW NEW
 #if defined(VW_PLATFORM_WINDOWS)
+    std::atomic<bool> m_needsDeviceReset{false};
+    std::atomic<bool> m_needsCacheRefresh{true};
 
-class NotificationClient : public IMMNotificationClient {
-    LONG m_refCount = 1;
-    AudioDriver *pAudioDriver;
+    // Cache
+    std::vector<std::vector<ComPtr<ISimpleAudioVolume>>> m_sessionsCache;
+    std::shared_mutex m_cacheMutex;
 
-public:
-    NotificationClient() = default;
-    void Init(AudioDriver *driver) { pAudioDriver = driver; }
+    // Pointers to Windows audio interfaces
+    ComPtr<IMMDeviceEnumerator> m_deviceEnumerator;
+    ComPtr<IMMDevice> m_defaultDevice;
+    ComPtr<IAudioEndpointVolume> m_endpointVolume;
+    ComPtr<IAudioSessionManager2> m_sessionManager2;
 
-    // IUnknown methods
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,
-                                             void **ppvObject) override {
-        if (riid == IID_IUnknown || riid == __uuidof(IMMNotificationClient)) {
-            *ppvObject = static_cast<IMMNotificationClient *>(this);
-            AddRef();
-            return S_OK;
-        }
-        *ppvObject = nullptr;
-        return E_NOINTERFACE;
-    };
-    ULONG STDMETHODCALLTYPE AddRef() override {
-        return InterlockedIncrement(&m_refCount);
-    };
-    ULONG STDMETHODCALLTYPE Release() override {
-        ULONG refCount = InterlockedDecrement(&m_refCount);
-        if (refCount == 0) {
-            delete this;
-        }
-        return refCount;
-    };
-
-    // IMMNotificationClient methods
-    HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(
-        EDataFlow flow, ERole role, LPCWSTR pwstrDefaultDeviceId) override {
-        if (flow == eRender && role == eConsole) {
-            pAudioDriver->onDefaultDeviceChanged();
-        }
-        return S_OK;
-    };
-
-    // These methods can be implemented as needed
-    HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(LPCWSTR pwstrDeviceId,
-                                                   DWORD dwNewState) override {
-        return S_OK;
-    };
-    HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR pwstrDeviceId) override {
-        return S_OK;
-    };
-    HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR pwstrDeviceId) override {
-        return S_OK;
-    };
-    HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(
-        LPCWSTR pwstrDeviceId, const PROPERTYKEY key) override {
-        return S_OK;
-    };
-};
+    // Pointers to notification clients
+    ComPtr<DeviceNotificationClient> m_deviceNotificationClient;
+    ComPtr<ManagerNotificationClient> m_managerNotificationClient;
 
 #endif
+};

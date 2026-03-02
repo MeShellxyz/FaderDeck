@@ -8,3 +8,8 @@ if(WIN32)
 else()
     target_sources(AudioDriver PRIVATE src/AudioDriver_Linux.cpp)
 endif()
+
+target_link_libraries(AudioDriver PRIVATE
+    Core
+    Config
+)

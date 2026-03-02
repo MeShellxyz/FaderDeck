@@ -4,9 +4,9 @@
 #include <sstream>
 #include <stdexcept>
 
-SerialListener::SerialListener(const SerialConfig &config,
-                               MixerSharedState &sharedState,
-                               std::atomic<bool> &isRunning)
+SerialListener::SerialListener(std::atomic<bool> &isRunning,
+                               const SerialConfig &config,
+                               MixerSharedState &sharedState)
     : m_serialConfig(config),
       m_sharedState(sharedState),
       m_isRunning(isRunning),
@@ -22,7 +22,9 @@ SerialListener::SerialListener(const SerialConfig &config,
 }
 
 SerialListener::~SerialListener() {
-    m_serialPort.close();
+    if (m_serialPort.is_open()) {
+        m_serialPort.close();
+    }
     m_ioContext.stop();
 }
 
@@ -59,8 +61,8 @@ void SerialListener::scheduleReconnect() {
                       << std::endl;
 
             m_isRunning.store(false, std::memory_order_release);
-            m_sharedState.sleepCv.notify_all();
-            this->stop();
+            m_sharedState.version.fetch_add(1, std::memory_order_release);
+            m_sharedState.version.notify_all();
             return;
         }
         std::cout << "[SERIAL] Attempting to reconnect..." << std::endl;
@@ -71,7 +73,7 @@ void SerialListener::scheduleReconnect() {
             ++m_reconnectAttempts;
             std::cerr << "[SERIAL] Reconnect attempt " << m_reconnectAttempts
                       << " failed." << std::endl;
-            scheduleReconnect(isRunning);
+            scheduleReconnect();
         }
     });
 }
@@ -83,6 +85,8 @@ void SerialListener::run() {
     while (m_isRunning.load(std::memory_order_acquire)) {
         try {
             m_ioContext.run();
+            
+            // Fallback in case broken callback chain stop without an error
             if (m_isRunning.load(std::memory_order_acquire)) {
                 std::cerr << "[SERIAL] io_context stopped unexpectedly. Attempting "
                              "to reconnect."
@@ -96,16 +100,9 @@ void SerialListener::run() {
                       << std::endl;
             m_serialPort.close();
             m_ioContext.restart();
-            scheduleReconnect(isRunning);
+            scheduleReconnect();
         }
     }
-}
-
-void SerialListener::stop() {
-    if (m_serialPort.is_open()) {
-        m_serialPort.close();
-    }
-    m_ioContext.stop();
 }
 
 void SerialListener::doRead() {
@@ -156,8 +153,8 @@ void SerialListener::handleRead(const boost::system::error_code &error,
         }
 
         // Wake up audio thread
-        m_sharedState.shouldSleep.store(false, std::memory_order_release);
-        m_sharedState.sleepCv.notify_all();
+        m_sharedState.version.fetch_add(1, std::memory_order_release);
+        m_sharedState.version.notify_all();
     } else {
         std::cerr << "[SERIAL] Received " << values.size()
                   << " values, expected " << m_sharedState.numChannels

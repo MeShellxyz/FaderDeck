@@ -7,15 +7,13 @@
 struct MixerSharedState {
     size_t numChannels;
     std::unique_ptr<std::atomic<float>[]> channelVolumes;
-    std::mutex sleepMutex;
-    std::condition_variable sleepCv;
-    std::atomic<bool> shouldSleep{true};
+    std::atomic<uint64_t> version{0};
 
     MixerSharedState(size_t numChannels)
         : numChannels(numChannels),
           channelVolumes(std::make_unique<std::atomic<float>[]>(numChannels)) {
         for (size_t i = 0; i < numChannels; ++i)
-            channelVolumes[i].store(0.0f); // Default volume
+            channelVolumes[i].store(0.0f); // Default volume - muted
     }
     MixerSharedState() = delete;
     MixerSharedState(const MixerSharedState &) = delete;

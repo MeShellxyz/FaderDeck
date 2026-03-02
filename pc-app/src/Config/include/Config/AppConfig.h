@@ -1,7 +1,7 @@
 #pragma once
 
 #include <string>
-#include <vector>
+#include <unordered_map>
 
 struct SerialConfig {
     std::string com_port;
@@ -11,7 +11,7 @@ struct AudioConfig {
     bool invert_sliders;
     bool mute_buttons;
     int num_channels;
-    std::vector<std::vector<std::string>> channel_apps;
+    std::unordered_map<std::wstring, int> processChannelMapping;
 };
 
 struct AppConfig {

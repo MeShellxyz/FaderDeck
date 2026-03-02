@@ -1,4 +1,5 @@
 #include "AudioDriver/AudioDriver.h"
+#include "AudioNotificationClients_Win.h"
 
 #include <TlHelp32.h>
 #include <algorithm>
@@ -6,392 +7,297 @@
 #include <set>
 #include <stdexcept>
 
-// Initialize static process name cache
-std::unordered_map<DWORD, AudioDriver::CacheProcessEntry>
-    AudioDriver::processNameCache;
+#include <array>
+#include <filesystem>
+#include <numeric>
+#include <vector>
 
-AudioDriver::AudioDriver() {
-    if (!initializeCOM()) {
+AudioDriver::AudioDriver(const std::atomic<bool> &isRunning,
+                         const AudioConfig &config,
+                         MixerSharedState &sharedState)
+    : m_isRunning(isRunning),
+      m_audioConfig(config),
+      m_sharedState(sharedState) {
+    // Initialize master channel index if mapped
+    auto it = m_audioConfig.processChannelMapping.find(L"master");
+    if (it != m_audioConfig.processChannelMapping.end()) {
+        m_masterChannelIndex = it->second;
+    }
+}
+
+void AudioDriver::run() {
+    ComInitGuard comGuard;
+    if (comGuard.hr != S_OK)
         throw std::runtime_error("Failed to initialize COM.");
+
+    if (!initGlobalInterfaces())
+        throw std::runtime_error("Failed to initialize audio interfaces.");
+
+    if (!initDeviceInterfaces()) {
+        releaseGlobalInterfaces();
+        throw std::runtime_error(
+            "Failed to initialize audio device interfaces.");
     }
+
+    uint64_t lastVersion = 0;
+
+    while (m_isRunning.load(std::memory_order_acquire)) {
+        handleDeviceChange();
+        handleCacheReset();
+
+        applyVolumes();
+
+        m_sharedState.version.wait(lastVersion, std::memory_order_acquire);
+        lastVersion = m_sharedState.version.load(std::memory_order_acquire);
+    }
+
+    releaseDeviceInterfaces();
+    releaseGlobalInterfaces();
 }
 
-AudioDriver::~AudioDriver() {
-    // Unregister notification callback to prevent callbacks to freed Impl
-    if (pEnumerator && pNotificationClient) {
-        // Unregister; use raw pointer from CComPtr
-        pEnumerator->UnregisterEndpointNotificationCallback(pNotificationClient.p);
-    }
-
-    CoUninitialize();
-}
-
-bool AudioDriver::initializeCOM() {
-    // Initialize COM library
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    if (FAILED(hr)) {
+bool AudioDriver::setVolume(int channelIndex, float volumeLevel) {
+    std::shared_lock lock(m_cacheMutex);
+    if (channelIndex < 0 || channelIndex >= m_audioConfig.num_channels ||
+        channelIndex == m_masterChannelIndex)
         return false;
-    }
 
-    // Create device enumerator
-    hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-                          __uuidof(IMMDeviceEnumerator),
-                          reinterpret_cast<void **>(&pEnumerator));
-
-    if (FAILED(hr)) {
-        CoUninitialize();
-        return false;
-    }
-
-    // Get default audio endpoint
-    hr = pEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &pDevice);
-    if (FAILED(hr)) {
-        CoUninitialize();
-        return false;
-    }
-
-    // Register for device notifications (default endpoint changes)
-    CComObject<NotificationClient>* pNotifRaw = nullptr;
-    hr = CComObject<NotificationClient>::CreateInstance(&pNotifRaw);
-    if (FAILED(hr) || !pNotifRaw) {
-        CoUninitialize();
-        return false;
-    }
-
-    pNotifRaw->Init(this);
-
-    CComPtr<IMMNotificationClient> spNotify;
-    hr = pNotifRaw->QueryInterface(__uuidof(IMMNotificationClient),
-                                   reinterpret_cast<void**>(&spNotify));
-    if (FAILED(hr)) {
-        delete pNotifRaw;
-        CoUninitialize();
-        return false;
-    }
-
-    hr = pEnumerator->RegisterEndpointNotificationCallback(spNotify);
-    if (FAILED(hr)) {
-        spNotify.Release();
-        CoUninitialize();
-        return false;
-    }
-
-    pNotificationClient = spNotify;
-
-
-    // Activate audio endpoint volume interface
-    hr = pDevice->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
-                           reinterpret_cast<void **>(&pEndpointVolume));
-
-    if (FAILED(hr)) {
-        CoUninitialize();
-        return false;
-    }
-
-    // Activate audio session manager interface
-    hr = pDevice->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
-                           reinterpret_cast<void **>(&pSessionManager));
-
-    if (FAILED(hr)) {
-        CoUninitialize();
-        return false;
+    for (const auto &sessionVolume : m_sessionsCache[channelIndex]) {
+        if (FAILED(sessionVolume->SetMasterVolume(volumeLevel, nullptr))) {
+            return false;
+        }
     }
 
     return true;
 }
 
-std::string AudioDriver::WideToUtf8(const wchar_t *wstr) {
-    if (!wstr)
-        return "";
+bool AudioDriver::setMute(int channelIndex, int mute) {
+    std::shared_lock lock(m_cacheMutex);
+    if (channelIndex < 0 || channelIndex >= m_audioConfig.num_channels ||
+        channelIndex == m_masterChannelIndex)
+        return false;
 
-    std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;
-    try {
-        return converter.to_bytes(wstr);
-    } catch (const std::exception &) {
-        return "<conversion_error>";
+    for (const auto &sessionVolume : m_sessionsCache[channelIndex]) {
+        if (FAILED(sessionVolume->SetMute(mute, nullptr))) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool AudioDriver::setMasterVolume(float volumeLevel) {
+    if (!m_endpointVolume) return false;
+
+    return SUCCEEDED(
+        m_endpointVolume->SetMasterVolumeLevelScalar(volumeLevel, nullptr));
+}
+
+bool AudioDriver::setMasterMute(int mute) {
+    if (!m_endpointVolume) return false;
+
+    return SUCCEEDED(m_endpointVolume->SetMute(mute, nullptr));
+}
+
+void AudioDriver::handleDeviceChange() {
+    if (m_needsDeviceReset.load(std::memory_order_acquire)) {
+        releaseDeviceInterfaces();
+        if (!initDeviceInterfaces()) {
+            throw std::runtime_error(
+                "Failed to reinitialize audio device interfaces.");
+        }
+        m_needsDeviceReset.store(false, std::memory_order_release);
+        m_needsCacheRefresh.store(true, std::memory_order_release);
     }
 }
 
-std::string
-AudioDriver::getProcessNameFromId(const DWORD &processId) {
-    // Check cache first (valid for 30 seconds)
-    auto now = std::chrono::system_clock::now();
-    auto it = processNameCache.find(processId);
-    if (it != processNameCache.end() &&
-        (now - it->second.timestamp) < std::chrono::seconds(30)) {
-        return it->second.name;
+void AudioDriver::handleCacheReset() {
+    if (m_needsCacheRefresh.load(std::memory_order_acquire)) {
+        std::unique_lock lock(m_cacheMutex);
+        refreshAudioSessionsCache();
+        m_needsCacheRefresh.store(false, std::memory_order_release);
     }
+}
 
-    // Not in cache, need to query process name
-    std::string processName = "<unknown>";
-    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
-                                  FALSE, processId);
+void AudioDriver::applyVolumes() {
+    bool isChanging = true;
+    size_t timestamp = 0;
+    constexpr float stabilizationThreshold = 0.01f;
+    constexpr size_t rollbackWindow = 20;
+    std::vector<std::array<float, rollbackWindow>> volumesHistory(
+        m_audioConfig.num_channels);
 
-    if (hProcess) {
-        WCHAR szProcessPath[MAX_PATH] = {0};
-        DWORD dwSize = MAX_PATH;
+    while (isChanging && m_isRunning.load(std::memory_order_acquire) &&
+           !m_needsDeviceReset.load(std::memory_order_acquire) &&
+           !m_needsCacheRefresh.load(std::memory_order_acquire)) {
 
-        // Get the full process path
-        if (QueryFullProcessImageNameW(hProcess, 0, szProcessPath, &dwSize)) {
-            WCHAR *fileName = wcsrchr(szProcessPath, L'\\');
-            if (fileName) {
-                // Skip the backslash and convert to UTF-8
-                fileName++;
-                processName = WideToUtf8(fileName);
+        // Apply volumes and store history
 
-                // Update cache
-                processNameCache[processId] = {processName, now};
+        for (size_t i = 0; i < m_audioConfig.num_channels; i++) {
+            float currentVolume =
+                m_sharedState.channelVolumes[i].load(std::memory_order_relaxed);
+
+            if (i == m_masterChannelIndex) {
+                if (!setMasterVolume(currentVolume)) {
+                    m_needsDeviceReset.store(true, std::memory_order_release);
+                    break;
+                }
+            } else if (!setVolume(i, currentVolume)) {
+                m_needsCacheRefresh.store(true, std::memory_order_release);
+                break;
             }
+
+            volumesHistory[i][timestamp % rollbackWindow] = currentVolume;
         }
-        CloseHandle(hProcess);
+
+        // Check if volmes stabilized
+        if (timestamp >= rollbackWindow) {
+            float sum = 0.0f;
+            for (size_t i = 0; i < m_audioConfig.num_channels; i++) {
+                for (size_t j = 0; j < rollbackWindow; j++) {
+                    sum += volumesHistory[i][j];
+                    if (sum > stabilizationThreshold) break;
+                }
+                if (sum > stabilizationThreshold) break;
+            }
+
+            if (sum < stabilizationThreshold) isChanging = false;
+        }
+
+        // Sleep for set framerate or until version changes
+        timestamp++;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+bool AudioDriver::initGlobalInterfaces() {
+    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                                  CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                                  (void **)m_deviceEnumerator.GetAddressOf());
+    if (FAILED(hr)) return false;
+
+    m_deviceNotificationClient = Microsoft::WRL::Make<DeviceNotificationClient>(
+        m_needsDeviceReset, m_sharedState.version);
+    hr = m_deviceEnumerator->RegisterEndpointNotificationCallback(
+        m_deviceNotificationClient.Get());
+
+    if (FAILED(hr)) return false;
+}
+
+void AudioDriver::releaseGlobalInterfaces() {
+    if (m_deviceEnumerator && m_deviceNotificationClient) {
+        m_deviceEnumerator->UnregisterEndpointNotificationCallback(
+            m_deviceNotificationClient.Get());
+    }
+    m_deviceNotificationClient.Reset();
+    m_deviceEnumerator.Reset();
+}
+
+bool AudioDriver::initDeviceInterfaces() {
+    HRESULT hr = m_deviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole,
+                                                             &m_defaultDevice);
+    if (FAILED(hr)) return false;
+
+    hr = m_defaultDevice->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL,
+                                   nullptr,
+                                   (void **)m_endpointVolume.GetAddressOf());
+    if (FAILED(hr)) return false;
+
+    hr = m_defaultDevice->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL,
+                                   nullptr,
+                                   (void **)m_sessionManager2.GetAddressOf());
+    if (FAILED(hr)) return false;
+
+    m_managerNotificationClient =
+        Microsoft::WRL::Make<ManagerNotificationClient>(m_needsCacheRefresh,
+                                                        m_sharedState.version);
+    hr = m_sessionManager2->RegisterSessionNotification(
+        m_managerNotificationClient.Get());
+
+    if (FAILED(hr)) return false;
+
+    return true;
+}
+
+void AudioDriver::releaseDeviceInterfaces() {
+    if (m_sessionManager2 && m_managerNotificationClient) {
+        m_sessionManager2->UnregisterSessionNotification(
+            m_managerNotificationClient.Get());
+    }
+    m_managerNotificationClient.Reset();
+    m_sessionManager2.Reset();
+    m_endpointVolume.Reset();
+    m_defaultDevice.Reset();
+}
+
+std::wstring AudioDriver::getProcessNameFromPID(const DWORD &processId) {
+    std::wstring processName = L"<unknown>";
+    HANDLE hProcess =
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, processId);
+    if (!hProcess) return processName;
+
+    WCHAR szProcessPath[MAX_PATH] = {0};
+    DWORD dwSize = MAX_PATH;
+    if (QueryFullProcessImageNameW(hProcess, 0, szProcessPath, &dwSize)) {
+        std::filesystem::path p(szProcessPath);
+        processName = p.filename().wstring();
+        return processName;
     }
 
     return processName;
 }
 
-std::vector<CComPtr<ISimpleAudioVolume>>
-AudioDriver::getAudioSessionsForProcess(
-    const std::string &processName) {
-    std::vector<CComPtr<ISimpleAudioVolume>> sessions;
+void AudioDriver::refreshAudioSessionsCache() {
+    if (!m_sessionsCache.empty()) m_sessionsCache.clear();
 
-    // Get session enumerator
-    CComPtr<IAudioSessionEnumerator> pSessionEnumerator = nullptr;
-    HRESULT hr = pSessionManager->GetSessionEnumerator(&pSessionEnumerator);
-    if (FAILED(hr)) {
-        return sessions;
-    }
+    ComPtr<IAudioSessionEnumerator> pSessionEnumerator = nullptr;
+    HRESULT hr = m_sessionManager2->GetSessionEnumerator(&pSessionEnumerator);
 
-    // Get session count
+    if (FAILED(hr)) return;
+
     int sessionCount = 0;
     hr = pSessionEnumerator->GetCount(&sessionCount);
-    if (FAILED(hr)) {
-        return sessions;
-    }
+    if (FAILED(hr)) return;
 
-    // Convert process name to lowercase for case-insensitive comparison
-    std::string processNameLower = processName;
-    std::transform(processNameLower.begin(), processNameLower.end(),
-                   processNameLower.begin(), ::towlower);
+    ComPtr<IAudioSessionControl> pSessionControl = nullptr;
+    ComPtr<IAudioSessionControl2> pSessionControl2 = nullptr;
+    ComPtr<ISimpleAudioVolume> pSimpleAudioVolume = nullptr;
 
-    // Iterate through all audio sessions
-    for (int i = 0; i < sessionCount; i++) {
-        // Get session control
-        CComPtr<IAudioSessionControl> pSessionControl = nullptr;
+    for (int i = 0; i < sessionCount; ++i) {
         hr = pSessionEnumerator->GetSession(i, &pSessionControl);
-        if (FAILED(hr)) {
-            continue;
-        }
+        if (FAILED(hr)) continue;
 
-        // Get session control 2
-        CComPtr<IAudioSessionControl2> pSessionControl2 = nullptr;
         hr = pSessionControl->QueryInterface(
             __uuidof(IAudioSessionControl2),
-            reinterpret_cast<void **>(&pSessionControl2));
+            (void **)pSessionControl2.GetAddressOf());
+        if (FAILED(hr)) continue;
 
-        if (FAILED(hr)) {
-            continue;
-        }
+        DWORD pid = 0;
+        hr = pSessionControl2->GetProcessId(&pid);
+        if (FAILED(hr)) continue;
 
-        // Get process ID
-        DWORD processId = 0;
-        hr = pSessionControl2->GetProcessId(&processId);
-        if (FAILED(hr)) {
-            continue;
-        }
+        std::wstring processName = getProcessNameFromPID(pid);
+        normalizeWString(processName);
 
-        // Get process name and convert to lowercase
-        std::string currentProcessName = getProcessNameFromId(processId);
-        std::transform(currentProcessName.begin(), currentProcessName.end(),
-                       currentProcessName.begin(), ::towlower);
+        auto it = m_audioConfig.processChannelMapping.find(processName);
+        if (it != m_audioConfig.processChannelMapping.end()) {
+            int channelIndex = it->second;
+            if (channelIndex >= 0 &&
+                channelIndex < m_audioConfig.num_channels) {
+                hr = pSessionControl2->QueryInterface(
+                    __uuidof(ISimpleAudioVolume),
+                    (void **)pSimpleAudioVolume.GetAddressOf());
+                if (FAILED(hr)) continue;
 
-        // If process name matches
-        if (currentProcessName == processNameLower) {
-            // Get simple audio volume interface
-            CComPtr<ISimpleAudioVolume> pSimpleVolume = nullptr;
-            hr = pSessionControl->QueryInterface(
-                __uuidof(ISimpleAudioVolume),
-                reinterpret_cast<void **>(&pSimpleVolume));
-
-            if (SUCCEEDED(hr)) {
-                sessions.push_back(pSimpleVolume);
+                m_sessionsCache[channelIndex].push_back(pSimpleAudioVolume);
             }
         }
-    }
 
-    return sessions;
+        pSimpleAudioVolume.Reset();
+        pSessionControl2.Reset();
+        pSessionControl.Reset();
+    }
 }
 
-bool AudioDriver::setMasterVolume(float volumeLevel) {
-    // Clip volume level to valid range [0.0, 1.0]
-    volumeLevel = std::clamp(volumeLevel, 0.0f, 1.0f);
-
-    // Set master volume
-    HRESULT hr =
-        pEndpointVolume->SetMasterVolumeLevelScalar(volumeLevel, nullptr);
-
-    return SUCCEEDED(hr);
-}
-
-bool AudioDriver::setVolumeInternal(const std::string &processName,
-                                               float volumeLevel) {
-    // Clip volume level to valid range [0.0, 1.0]
-    volumeLevel = std::clamp(volumeLevel, 0.0f, 1.0f);
-
-    // Convert process name to lowercase for case-insensitive comparison
-    std::string processNameLower = processName;
-    std::transform(processNameLower.begin(), processNameLower.end(),
-                   processNameLower.begin(), ::towlower);
-
-    // Special case for master volume
-    if (processNameLower == "master") {
-        return setMasterVolume(volumeLevel);
-    }
-
-    // Set volume for all sessions of the specified process
-    for (auto &session : getAudioSessionsForProcess(processName)) {
-        if (session) {
-            HRESULT hr = session->SetMasterVolume(volumeLevel, nullptr);
-            if (FAILED(hr)) {
-                return false;
-            }
-        }
-    }
-
-    return true;
-}
-
-bool AudioDriver::setVolume(const std::string &processName,
-                                       float volumeLevel) {
-    // Thread-safe access to volume control
-    std::lock_guard<std::mutex> lock(mtx);
-    return setVolumeInternal(processName, volumeLevel);
-}
-
-bool AudioDriver::setVolume(
-    const std::vector<std::string> &processNames, float volumeLevel) {
-    // Thread-safe access to volume control
-    std::lock_guard<std::mutex> lock(mtx);
-
-    // Clip volume level to valid range [0.0, 1.0]
-    volumeLevel = std::clamp(volumeLevel, 0.0f, 1.0f);
-
-    std::set<CComPtr<ISimpleAudioVolume>> uniqueSessions;
-
-    // Set volume for all specified processes
-    for (const auto &processName : processNames) {
-        std::string processNameLower = processName;
-        std::transform(processNameLower.begin(), processNameLower.end(),
-                       processNameLower.begin(), ::towlower);
-
-        if (processNameLower == "master") {
-            return setMasterVolume(volumeLevel);
-        }
-
-        for (auto &session : getAudioSessionsForProcess(processNameLower)) {
-            if (session) {
-                uniqueSessions.insert(session);
-            }
-        }
-    }
-
-    for (auto &session : uniqueSessions) {
-        if (session) {
-            HRESULT hr = session->SetMasterVolume(volumeLevel, nullptr);
-            if (FAILED(hr)) {
-                return false;
-            }
-        }
-    }
-
-    return true;
-}
-
-bool AudioDriver::setMasterMute(int mute) {
-    // Set master mute state
-    HRESULT hr = pEndpointVolume->SetMute(mute, nullptr);
-    return SUCCEEDED(hr);
-}
-
-bool AudioDriver::setMuteInternal(const std::string &processName,
-                                             int mute) {
-    // Convert process name to lowercase for case-insensitive comparison
-    std::string processNameLower = processName;
-    std::transform(processNameLower.begin(), processNameLower.end(),
-                   processNameLower.begin(), ::towlower);
-
-    // Special case for master mute
-    if (processNameLower == "master") {
-        return setMasterMute(mute);
-    }
-
-    // Set mute for all sessions of the specified process
-    for (auto &session : getAudioSessionsForProcess(processName)) {
-        if (session) {
-            HRESULT hr = session->SetMute(mute, nullptr);
-            if (FAILED(hr)) {
-                return false;
-            }
-        }
-    }
-
-    return true;
-}
-
-bool AudioDriver::setMute(const std::string &processName, int mute) {
-    // Thread-safe access to mute control
-    std::lock_guard<std::mutex> lock(mtx);
-    return setMuteInternal(processName, mute);
-}
-
-bool AudioDriver::setMute(
-    const std::vector<std::string> &processNames, int mute) {
-    // Thread-safe access to mute control
-    std::lock_guard<std::mutex> lock(mtx);
-
-    std::set<CComPtr<ISimpleAudioVolume>> uniqueSessions;
-
-    for (const auto &processName : processNames) {
-        std::string processNameLower = processName;
-        std::transform(processNameLower.begin(), processNameLower.end(),
-                       processNameLower.begin(), ::towlower);
-
-        if (processNameLower == "master") {
-            return setMasterMute(mute);
-        }
-
-        for (auto &session : getAudioSessionsForProcess(processNameLower)) {
-            if (session) {
-                uniqueSessions.insert(session);
-            }
-        }
-    }
-
-    // Set mute for all specified processes
-    for (auto &session : uniqueSessions) {
-        if (session) {
-            HRESULT hr = session->SetMute(mute, nullptr);
-            if (FAILED(hr)) {
-                return false;
-            }
-        }
-    }
-
-    return true;
-}
-
-void AudioDriver::onDefaultDeviceChanged() {
-    std::lock_guard<std::mutex> lock(mtx);
-
-    pDevice.Release();
-    pEndpointVolume.Release();
-    pSessionManager.Release();
-
-    HRESULT hr =
-        pEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &pDevice);
-    if (SUCCEEDED(hr)) {
-        pDevice->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
-                          reinterpret_cast<void **>(&pEndpointVolume));
-        pDevice->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
-                          reinterpret_cast<void **>(&pSessionManager));
-    }
+void AudioDriver::normalizeWString(std::wstring &input) {
+    CharLowerBuffW(input.data(), static_cast<DWORD>(input.size()));
 }

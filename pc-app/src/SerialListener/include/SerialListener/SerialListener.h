@@ -8,7 +8,8 @@
 
 class SerialListener {
 public:
-    SerialListener(const SerialConfig &config, MixerSharedState &sharedState);
+    SerialListener(std::atomic<bool> &isRunning,
+                   const SerialConfig &config, MixerSharedState &sharedState);
     ~SerialListener();
 
     // Prevent copying, allow moving
@@ -18,7 +19,6 @@ public:
     SerialListener &operator=(SerialListener &&) = delete;
 
     void run();
-    void stop();
 
 private:
     void doRead();
@@ -28,9 +28,9 @@ private:
     bool openPort();
     void scheduleReconnect();
 
+    std::atomic<bool> &m_isRunning;
     const SerialConfig &m_serialConfig;
     MixerSharedState &m_sharedState;
-    std::atomic<bool> &m_isRunning;
 
     boost::asio::io_context m_ioContext;
     boost::asio::serial_port m_serialPort;

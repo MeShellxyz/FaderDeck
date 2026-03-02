@@ -6,3 +6,8 @@ if(WIN32)
 else()
     add_executable(HWMix main_linux.cpp)
 endif()
+
+target_link_libraries(HWMix PRIVATE 
+    AppHost    
+    Config
+)
