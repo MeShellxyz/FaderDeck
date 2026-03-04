@@ -31,4 +31,8 @@ add_subdirectory(src/AudioDriver)
 add_subdirectory(src/SerialListener)
 add_subdirectory(src/AppHost)
 
+if(WIN32)
+    add_subdirectory(src/WinUI)
+endif()
+
 add_subdirectory(app)

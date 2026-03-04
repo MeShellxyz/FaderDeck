@@ -12,7 +12,7 @@
 class AppHost
 {
 public:
-    AppHost(const AppConfig &config);
+    AppHost(const AppConfig &config, std::atomic<bool> &isRunning);
     ~AppHost() = default;
 
     AppHost(const AppHost &) = delete;
@@ -33,6 +33,6 @@ private:
     std::jthread m_serialWorker;
     std::jthread m_audioWorker;
 
-    std::atomic<bool> m_isRunning{false};
+    std::atomic<bool> &m_isRunning;
 
 };

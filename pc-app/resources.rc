@@ -1,7 +1,0 @@
-#include <windows.h>
-#include "include/resources.h"
-
-IDI_TRAYICON ICON "icons/icon.ico"
-IDI_APPICON ICON "icons/icon.ico"
-
-MAINICON ICON "icons/icon.ico"
