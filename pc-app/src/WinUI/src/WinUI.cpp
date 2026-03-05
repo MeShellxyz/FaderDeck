@@ -3,6 +3,10 @@
 #include "WinUI/resources.h"
 
 #include <shellapi.h>
+#include <shlobj.h>
+#include <KnownFolders.h>
+
+#include <filesystem>
 
 #define WM_TRAYICON (WM_APP + 1)
 
@@ -19,8 +23,15 @@ LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void showContextMenu(HWND hwnd, POINT pt);
 BOOL addNotifyIcon(HWND hwnd);
 BOOL deleteNotifyIcon(HWND hwnd);
+void openConfigInExplorer();
 
 void WinUI::runMessageLoop(HINSTANCE hInstance, int nCmdShow) {
+
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    if (FAILED(hr)) {
+        MessageBoxW(nullptr, L"Failed to initialize COM library.", L"Error", MB_ICONERROR);
+        return;
+    }
 
     registerWindowClass(hInstance, WindowProc);
 
@@ -39,6 +50,8 @@ void WinUI::runMessageLoop(HINSTANCE hInstance, int nCmdShow) {
             DispatchMessage(&msg);
         }
     }
+
+    CoUninitialize();
 }
 
 
@@ -100,6 +113,26 @@ BOOL deleteNotifyIcon(HWND hwnd) {
     return Shell_NotifyIconW(NIM_DELETE, &nid);
 }
 
+void openConfigInExplorer() {
+    PWSTR pszPath = nullptr;
+
+    HRESULT hr =
+        SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &pszPath);
+    if (FAILED(hr)) {
+        MessageBoxW(nullptr, L"Failed to get AppData path.", L"Error", MB_ICONERROR);
+        return;
+    }
+
+    std::filesystem::path configFilePath(pszPath);
+    CoTaskMemFree(pszPath);
+
+    configFilePath /= "com.ms.volware";
+    configFilePath /= "config.toml";
+
+    ShellExecuteW(nullptr, L"open", configFilePath.c_str(), nullptr, nullptr, SW_SHOW);
+
+}
+
 LRESULT CALLBACK WinUI::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
                                    LPARAM lParam) {
     switch (uMsg) {
@@ -114,7 +147,7 @@ LRESULT CALLBACK WinUI::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
         case IDM_CONFIG:
-            // Handle config menu item
+            openConfigInExplorer();
             break;
         case IDM_EXIT:
             DestroyWindow(hwnd);
