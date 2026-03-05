@@ -38,19 +38,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         // std::cerr << "Failed to load config. Using defaults." << std::endl;
     }
     // std::cout << "[INIT] Done" << std::endl;
-    
+
     try {
         AppHost appHost(appConfig, g_isRunning);
-        std::jthread hostThread([&appHost] { appHost.run(); });
-        WinUI winUI(hInstance);
-        winUI.runMessageLoop();
-        g_isRunning.store(false, std::memory_order_release);
+        // std::jthread hostThread([&appHost] { appHost.run(); });
+        appHost.run();
+        
+        std::this_thread::sleep_for(std::chrono::minutes(2));
+        // WinUI::runMessageLoop(hInstance, nCmdShow);
+        // g_isRunning.store(false, std::memory_order_release);
     } catch (const std::exception &e) {
         // std::cerr << "Error: " << e.what() << std::endl;
-        return 1; }
-        
-        
-
+        return 1;
+    }
 
     std::cout << std::endl;
 
