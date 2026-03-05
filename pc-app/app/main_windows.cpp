@@ -16,7 +16,6 @@
 #include <windows.h>
 
 // Global running flag
-std::atomic<bool> g_isRunning{true};
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nCmdShow) {
@@ -40,13 +39,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     // std::cout << "[INIT] Done" << std::endl;
 
     try {
-        AppHost appHost(appConfig, g_isRunning);
-        // std::jthread hostThread([&appHost] { appHost.run(); });
+        AppHost appHost(appConfig);
         appHost.run();
         
-        std::this_thread::sleep_for(std::chrono::minutes(2));
-        // WinUI::runMessageLoop(hInstance, nCmdShow);
-        // g_isRunning.store(false, std::memory_order_release);
+        WinUI::runMessageLoop(hInstance, nCmdShow);
+
+        appHost.stop();
     } catch (const std::exception &e) {
         // std::cerr << "Error: " << e.what() << std::endl;
         return 1;

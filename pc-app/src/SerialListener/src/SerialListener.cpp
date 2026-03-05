@@ -109,6 +109,17 @@ void SerialListener::run() {
     }
 }
 
+void SerialListener::stop() {
+    if (m_isRunning.load(std::memory_order_acquire)) return;
+
+    if (m_serialPort.is_open()) {
+        m_serialPort.close();
+    }
+    m_reconnectTimer.cancel();
+    m_ioContext.stop();
+}
+
+
 void SerialListener::onRead() {
     boost::asio::async_read_until(m_serialPort, m_readBuffer, '\n',
                                   [this](const boost::system::error_code &error,
@@ -121,6 +132,8 @@ void SerialListener::onRead() {
 void SerialListener::onMessageRecieved(const boost::system::error_code &error,
                                        size_t bytesTransferred) {
     if (error) {
+        if (error == boost::asio::error::operation_aborted) return;
+        
         std::cerr << "[SERIAL] Read error: " << error.message() << std::endl;
         m_serialPort.close();
         m_readBuffer.consume(bytesTransferred);

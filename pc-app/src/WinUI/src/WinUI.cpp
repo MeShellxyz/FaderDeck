@@ -26,9 +26,9 @@ void WinUI::runMessageLoop(HINSTANCE hInstance, int nCmdShow) {
 
     WCHAR title[100];
     LoadStringW(hInstance, IDS_APP_TITLE, title, ARRAYSIZE(title));
-    HWND hWnd = CreateWindowExW(0, L"WinUIClass", title, WS_OVERLAPPEDWINDOW,
+    HWND hWnd = CreateWindowExW(0, L"WinUIClass", title, NULL,
                                 CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-                                CW_USEDEFAULT, NULL, NULL, hInstance, NULL);
+                                CW_USEDEFAULT, HWND_MESSAGE, NULL, hInstance, NULL);
 
     if (hWnd) {
         ShowWindow(hWnd, nCmdShow);

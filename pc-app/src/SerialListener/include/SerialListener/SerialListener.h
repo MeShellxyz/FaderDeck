@@ -20,6 +20,7 @@ public:
     SerialListener &operator=(SerialListener &&) = delete;
 
     void run();
+    void stop();
 
 private:
     void onRead();
