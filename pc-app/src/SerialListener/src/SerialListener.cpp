@@ -40,12 +40,10 @@ bool SerialListener::openPort() {
         m_serialPort.set_option(boost::asio::serial_port_base::stop_bits(
             boost::asio::serial_port_base::stop_bits::one));
 
-        std::cout << "[SERIAL] Port opened: " << m_serialConfig.com_port
-                  << " at " << m_serialConfig.baud_rate << " baud."
-                  << std::endl;
+        boost::asio::write(m_serialPort, boost::asio::buffer("s"));
+
         return true;
     } catch (const std::exception &e) {
-        std::cerr << "[SERIAL] Error opening port: " << e.what() << std::endl;
         return false;
     }
 }
