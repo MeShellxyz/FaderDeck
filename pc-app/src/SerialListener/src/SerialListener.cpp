@@ -117,7 +117,6 @@ void SerialListener::stop() {
     m_ioContext.stop();
 }
 
-
 void SerialListener::onRead() {
     boost::asio::async_read_until(m_serialPort, m_readBuffer, '\n',
                                   [this](const boost::system::error_code &error,
@@ -131,7 +130,7 @@ void SerialListener::onMessageRecieved(const boost::system::error_code &error,
                                        size_t bytesTransferred) {
     if (error) {
         if (error == boost::asio::error::operation_aborted) return;
-        
+
         std::cerr << "[SERIAL] Read error: " << error.message() << std::endl;
         m_serialPort.close();
         m_readBuffer.consume(bytesTransferred);
@@ -165,6 +164,7 @@ bool SerialListener::handleData(std::istringstream &ss) {
     std::string token;
 
     std::vector<int> values;
+    values.reserve(m_sharedState.numChannels);
     while (std::getline(ss, token, ',')) {
         try {
             values.push_back(std::stoi(token));
@@ -177,13 +177,13 @@ bool SerialListener::handleData(std::istringstream &ss) {
 
     // Update shared state if we got the expected number of values
     if (values.size() == m_sharedState.numChannels) {
+        const bool inv = m_serialConfig.invert_sliders;
+
         for (size_t i = 0; i < values.size(); ++i) {
-            float volume = 0.0f;
-            if (m_serialConfig.invert_sliders) {
-                volume = 1.0f - static_cast<float>(values[i]) / 1023.0f;
-            } else {
-                volume = static_cast<float>(values[i]) / 1023.0f;
-            }
+            int clampedValue = std::clamp(values[i], 0, 1023);
+            float rawVolume = static_cast<float>(clampedValue) / 1023.0f;
+            float volume = inv ? 1.0f - rawVolume : rawVolume;
+
             m_sharedState.channelVolumes[i].store(volume,
                                                   std::memory_order_relaxed);
         }
@@ -201,6 +201,7 @@ bool SerialListener::handleDataWithMute(std::istringstream &ss) {
     std::string token;
 
     std::vector<int> values;
+    values.reserve(m_sharedState.numChannels * 2);
     while (std::getline(ss, token, ',')) {
         try {
             values.push_back(std::stoi(token));
@@ -213,13 +214,13 @@ bool SerialListener::handleDataWithMute(std::istringstream &ss) {
 
     // Update shared state if we got the expected number of values
     if (values.size() == m_sharedState.numChannels * 2) {
+        const bool inv = m_serialConfig.invert_sliders;
+
         for (size_t i = 0; i < m_sharedState.numChannels; ++i) {
-            float volume = 0.0f;
-            if (m_serialConfig.invert_sliders) {
-                volume = 1.0f - static_cast<float>(values[i]) / 1023.0f;
-            } else {
-                volume = static_cast<float>(values[i]) / 1023.0f;
-            }
+            int clampedValue = std::clamp(values[i], 0, 1023);
+            float rawVolume = static_cast<float>(clampedValue) / 1023.0f;
+            float volume = inv ? 1.0f - rawVolume : rawVolume;
+
             bool mute = values[i + m_sharedState.numChannels] != 0;
 
             m_sharedState.channelVolumes[i].store(volume,
