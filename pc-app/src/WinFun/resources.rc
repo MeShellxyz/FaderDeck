@@ -32,9 +32,10 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "MeShellxyz"
-            VALUE "FileDescription", "FaderDeck - Hardware audio mixer"
+            VALUE "FileDescription", "FaderDeck"
             VALUE "FileVersion", "2.0.0.0"
             VALUE "InternalName", "FaderDeck"
+            VALUE "LegalCopyright", "Copyright (C) 2025 MeShellxyz. MIT License."
             VALUE "OriginalFilename", "FaderDeck.exe"
             VALUE "ProductName", "FaderDeck"
             VALUE "ProductVersion", "2.0.0.0"

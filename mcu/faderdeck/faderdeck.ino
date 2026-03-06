@@ -1,5 +1,5 @@
 /**
- * VolWare
+ * FaderDeck
  *
  * This program reads values from physical knobs (potentiometers) connected to
  * the Arduino and reports changes over the serial connection. It filters out
