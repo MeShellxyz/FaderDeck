@@ -126,7 +126,7 @@ void openConfigInExplorer() {
     std::filesystem::path configFilePath(pszPath);
     CoTaskMemFree(pszPath);
 
-    configFilePath /= "com.ms.volware";
+    configFilePath /= "com.ms.faderdeck";
     configFilePath /= "config.toml";
 
     ShellExecuteW(nullptr, L"open", configFilePath.c_str(), nullptr, nullptr, SW_SHOW);

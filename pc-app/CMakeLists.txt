@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5...4.2)
-project(VolWare VERSION 0.1.0)
+project(FaderDeck VERSION 2.0.0)
 
 include(CheckIPOSupported)
 check_ipo_supported(RESULT lto_supported OUTPUT lto_error)

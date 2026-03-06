@@ -8,7 +8,7 @@
 #include "Core/MixerSharedState.h"
 #include "Core/Platform.h"
 
-#ifdef VW_PLATFORM_WINDOWS
+#ifdef FD_PLATFORM_WINDOWS
 
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
@@ -26,7 +26,7 @@ using Microsoft::WRL::ComPtr;
 #include <vector>
 #endif
 
-#if defined(VW_PLATFORM_WINDOWS)
+#if defined(FD_PLATFORM_WINDOWS)
 struct ComInitGuard {
     HRESULT hr;
     ComInitGuard() { hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED); }
@@ -64,7 +64,7 @@ private:
     bool setMasterVolume(float volumeLevel);
     bool setMasterMute(int mute);
 
-#if defined(VW_PLATFORM_WINDOWS)
+#if defined(FD_PLATFORM_WINDOWS)
     inline void handleDeviceChange();
     inline void handleCacheReset();
 
@@ -91,7 +91,7 @@ private:
     MixerSharedState &m_sharedState;
 
 /// NEW NEW NEW
-#if defined(VW_PLATFORM_WINDOWS)
+#if defined(FD_PLATFORM_WINDOWS)
     std::atomic<bool> m_needsDeviceReset{false};
     std::atomic<bool> m_needsCacheRefresh{true};
 

@@ -15,7 +15,7 @@ ConfigStore::ConfigStore() {
 
     std::filesystem::path appDataPath(pszPath);
     CoTaskMemFree(pszPath);
-    m_configPath = appDataPath / "com.ms.volware" / "config.toml";
+    m_configPath = appDataPath / "com.ms.faderdeck" / "config.toml";
 
     // ensure file exists if not create
     if (!std::filesystem::exists(m_configPath)) {

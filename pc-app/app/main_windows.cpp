@@ -23,7 +23,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         return 1;
     }
 
-    WinAutoStart::handleAutoStart(L"HWMix", appConfig.auto_start);
+    WinAutoStart::handleAutoStart(L"FaderDeck", appConfig.auto_start);
 
     try {
         AppHost appHost(appConfig);
