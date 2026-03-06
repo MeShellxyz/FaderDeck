@@ -32,7 +32,7 @@ Designed with strict performance constraints, FaderDeck runs silently in the sys
 ## 🚀 Quick Start (User Guide)
 
 ### 1. Hardware Setup
-To build the physical deck, you will need an Arduino (Uno, Nano, or similar) and standard linear potentiometers.ggVGd
+To build the physical deck, you will need an Arduino (Uno, Nano, or similar) and standard linear potentiometers.
 
 
 

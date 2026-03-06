@@ -144,8 +144,6 @@ void SerialListener::onMessageRecieved(const boost::system::error_code &error,
     std::string line;
     std::getline(is, line);
 
-    std::cout << "[SERIAL] Received line: " << line << std::endl;
-
     // Parse the line as csv
     std::istringstream ss(line);
 
