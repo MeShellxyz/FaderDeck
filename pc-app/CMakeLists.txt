@@ -32,7 +32,7 @@ add_subdirectory(src/SerialListener)
 add_subdirectory(src/AppHost)
 
 if(WIN32)
-    add_subdirectory(src/WinUI)
+    add_subdirectory(src/WinFun)
 endif()
 
 add_subdirectory(app)

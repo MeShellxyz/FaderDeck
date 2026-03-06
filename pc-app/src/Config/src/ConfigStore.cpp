@@ -14,6 +14,10 @@ bool ConfigStore::loadConfig(AppConfig &config) {
 
 void ConfigStore::saveDefaultConfig() {
     toml::table configTable{
+        {"system",
+         toml::table{
+             {"auto_start", false},
+         }},
         {"serial", toml::table{{"com_port", "COM3"},
                                {"baud_rate", 115200},
                                {"invert_sliders", false}}},
@@ -37,6 +41,7 @@ void ConfigStore::saveDefaultConfig() {
 }
 
 void ConfigStore::parseTomlTable(const toml::table &table, AppConfig &config) {
+    config.auto_start = table["system"]["auto_start"].value_or(config.auto_start);
     config.serialConfig.com_port =
         table["serial"]["com_port"].value_or(config.serialConfig.com_port);
     config.serialConfig.baud_rate =

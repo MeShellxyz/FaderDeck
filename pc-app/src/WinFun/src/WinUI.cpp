@@ -1,6 +1,6 @@
 #include "WinUI/WinUI.h"
 
-#include "WinUI/resources.h"
+#include "resources.h"
 
 #include <shellapi.h>
 #include <shlobj.h>

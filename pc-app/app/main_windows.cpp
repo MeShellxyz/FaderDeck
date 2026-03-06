@@ -1,6 +1,7 @@
 #include "AppHost/AppHost.h"
 #include "Config/AppConfig.h"
 #include "Config/ConfigStore.h"
+#include "WinAutoStart/WinAutoStart.h"
 #include "WinUI/WinUI.h"
 
 #include <iostream>
@@ -21,6 +22,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     if (!configStore.loadConfig(appConfig)) {
         return 1;
     }
+
+    WinAutoStart::handleAutoStart(L"HWMix", appConfig.auto_start);
 
     try {
         AppHost appHost(appConfig);
